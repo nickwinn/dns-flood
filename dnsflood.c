@@ -13,6 +13,8 @@
 #include <netinet/udp.h>
 #include <sys/wait.h>
 #include <getopt.h>
+#include <signal.h>
+#include <time.h>
 
 #define	  CLASS_INET 1
 
@@ -126,6 +128,7 @@ unsigned short in_cksum(char *packet, int len)
 	return (answer);
 }
 
+
 void usage(char *progname)
 {
 	printf("Usage: %s <query_name> <destination_ip> [options]\n"
@@ -136,6 +139,7 @@ void usage(char *progname)
 			"\t-P, --src-port\t\tsource port\n"
 			"\t-i, --interval\t\tinterval (in millisecond) between two packets\n"
 			"\t-n, --number\t\tnumber of DNS requests to send\n"
+			"\t-d, --duration\t\trun for at most this many seconds\n"
 			"\t-r, --random\t\tfake random source IP\n"
 			"\t-D, --daemon\t\trun as daemon\n"
 			"\t-h, --help\n"
@@ -214,6 +218,13 @@ int read_ip_from_file(char *filename)
 {
 }
 
+static int stop = 0;
+
+void term(int signum) {
+    printf("Stopping.. \n");
+    stop = 1;
+}
+
 int main(int argc, char **argv)
 {
 	char qname[256] = {0};	/* question name */
@@ -222,9 +233,13 @@ int main(int argc, char **argv)
 	struct sockaddr_in sin_dst = {0};	/* destination sock address*/
 	u_short src_port = 0;			/* source port             */
 	u_short dst_port = 53;			/* destination port        */
-	int sock;					/* socket to write on      */
+	int sock;				/* socket to write on      */
 	int number = 0;
+	int duration = 0;
 	int count = 0;
+	double difft = 0;
+	time_t start_t, end_t;
+	struct sigaction action;
 	int sleep_interval = 0;	/* interval (in millisecond) between two packets */
 
 	int random_ip = 0;
@@ -232,7 +247,7 @@ int main(int argc, char **argv)
 
 	int arg_options;
 
-	const char *short_options = "f:t:p:P:Drs:i:n:h";
+	const char *short_options = "f:t:p:P:Drs:i:n:d:h";
 
 	const struct option long_options[] = {
 		{"type", required_argument, NULL, 't'},
@@ -244,6 +259,7 @@ int main(int argc, char **argv)
 		{"source-ip", required_argument, NULL, 's'},
 		{"interval", required_argument, NULL, 'i'},
 		{"number", required_argument, NULL, 'n'},
+		{"duration", required_argument, NULL, 'd'},
 		{"help", no_argument, NULL, 'h'},
 		{NULL, 0, NULL, 0}
 	};
@@ -281,6 +297,10 @@ int main(int argc, char **argv)
 			number = atoi(optarg);
 			break;
 
+		case 'd':
+			duration = atoi(optarg);
+			break;
+	
 		case 'r':
 			random_ip = 1;
 			srandom((unsigned long)time(NULL));
@@ -385,7 +405,16 @@ int main(int argc, char **argv)
 	iphdr->ip_ttl = 245;
 	iphdr->ip_p = IPPROTO_UDP;
 
-	while (1) {
+	/* Set signal handler */
+	memset(&action, 0, sizeof(struct sigaction));
+        action.sa_handler = term;
+        sigaction(SIGTERM, &action, NULL);
+        sigaction(SIGINT, &action, NULL);
+
+	time(&start_t);
+	time(&end_t);
+
+	while (!stop) {
 		int dns_datalen;
 		int udp_datalen;
 		int ip_datalen;
@@ -424,9 +453,18 @@ int main(int argc, char **argv)
 		}
 
 		count++;
-
+		time(&end_t);
+		difft = difftime(end_t, start_t);
+		
+		// Check if no count reach
 		if (number > 0 && count >= number) {
 			// done
+			break;
+		}
+		
+		// Check if duration count reached
+		if (duration > 0 && difft >= duration) {
+			// done 
 			break;
 		}
 
@@ -435,7 +473,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf("sent %d DNS requests.\n", count);
+	printf("sent %d DNS requests in %f sec.\n", count, difft);
 
 	return 0;
 }
